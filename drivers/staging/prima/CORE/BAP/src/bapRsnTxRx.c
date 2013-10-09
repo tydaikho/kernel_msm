@@ -232,7 +232,7 @@ VOS_STATUS bapRsnSendEapolFrame( v_PVOID_t pvosGCtx, tAniPacket *pAniPkt )
         return VOS_STATUS_E_EMPTY;
     }
     status = bapRsnAcquirePacket( &pPacket, &pData, pktLen );
-    if( VOS_IS_STATUS_SUCCESS( status ) )
+    if( VOS_IS_STATUS_SUCCESS( status ) && ( NULL != pPacket ))
     {
         vos_mem_copy( pData, pSrc, pktLen );
         //Send the packet, need to check whether we have an outstanding packet first.
