@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2012, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2012, Code Aurora Forum. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -91,7 +91,10 @@ struct wfd_inst {
 	u32 out_buf_size;
 	struct list_head input_mem_list;
 	struct wfd_stats stats;
+
+	//[LGE_S] 20130107 taewonee.kim@lge.com, QC pre patch, avoid exiting mdp task thread on error
 	struct completion stop_mdp_thread;
+	//[LGE_E] 20130107 taewonee.kim@lge.com, QC pre patch, avoid exiting mdp task thread on error
 };
 
 struct wfd_vid_buffer {
@@ -155,15 +158,13 @@ static int wfd_allocate_ion_buffer(struct ion_client *client,
 	struct ion_handle *handle = NULL;
 	void *kvaddr = NULL;
 	unsigned int alloc_regions = 0;
-	unsigned int ion_flags = 0;
 	int rc = 0;
 
 	alloc_regions = ION_HEAP(ION_CP_MM_HEAP_ID);
-	alloc_regions |= secure ? 0 :
+	alloc_regions |= secure ? ION_SECURE :
 				ION_HEAP(ION_IOMMU_HEAP_ID);
-	ion_flags |= secure ? ION_SECURE : 0;
 	handle = ion_alloc(client,
-			mregion->size, SZ_4K, alloc_regions, ion_flags);
+			mregion->size, SZ_4K, alloc_regions, 0);
 
 	if (IS_ERR_OR_NULL(handle)) {
 		WFD_MSG_ERR("Failed to allocate input buffer\n");
@@ -240,7 +241,6 @@ int wfd_allocate_input_buffers(struct wfd_device *wfd_dev,
 	int rc;
 	unsigned long flags;
 	struct mdp_buf_info mdp_buf = {0};
-	struct mem_region_map mmap_context = {0};
 	spin_lock_irqsave(&inst->inst_lock, flags);
 	if (inst->input_bufs_allocated) {
 		spin_unlock_irqrestore(&inst->inst_lock, flags);
@@ -250,6 +250,7 @@ int wfd_allocate_input_buffers(struct wfd_device *wfd_dev,
 	spin_unlock_irqrestore(&inst->inst_lock, flags);
 
 	for (i = 0; i < VENC_INPUT_BUFFERS; ++i) {
+		struct mem_region_map mmap_context = {0};
 		mpair = kzalloc(sizeof(*mpair), GFP_KERNEL);
 		enc_mregion = kzalloc(sizeof(*enc_mregion), GFP_KERNEL);
 		mdp_mregion = kzalloc(sizeof(*enc_mregion), GFP_KERNEL);
@@ -271,17 +272,12 @@ int wfd_allocate_input_buffers(struct wfd_device *wfd_dev,
 			goto alloc_fail;
 		}
 
-		WFD_MSG_DBG("NOTE: enc paddr = [%p->%p], kvaddr = %p\n",
-				enc_mregion->paddr, (int8_t *)
-				enc_mregion->paddr + enc_mregion->size,
+		WFD_MSG_ERR("NOTE: enc paddr = %p, kvaddr = %p\n",
+				enc_mregion->paddr,
 				enc_mregion->kvaddr);
 
 		rc = v4l2_subdev_call(&wfd_dev->enc_sdev, core, ioctl,
 				SET_INPUT_BUFFER, (void *)enc_mregion);
-		if (rc) {
-			WFD_MSG_ERR("Setting enc input buffer failed\n");
-			goto set_input_fail;
-		}
 
 		/* map the buffer from encoder to mdp */
 		mdp_mregion->kvaddr = enc_mregion->kvaddr;
@@ -305,7 +301,7 @@ int wfd_allocate_input_buffers(struct wfd_device *wfd_dev,
 			mdp_mregion->kvaddr = NULL;
 			mdp_mregion->paddr = NULL;
 			mdp_mregion->ion_handle = NULL;
-			goto mdp_mmap_fail;
+			goto alloc_fail;
 		}
 
 		mdp_buf.inst = inst->mdp_inst;
@@ -318,58 +314,34 @@ int wfd_allocate_input_buffers(struct wfd_device *wfd_dev,
 				((int)mdp_mregion->paddr + mdp_mregion->size),
 				mdp_mregion->kvaddr);
 
-		rc = v4l2_subdev_call(&wfd_dev->mdp_sdev, core, ioctl,
-				MDP_Q_BUFFER, (void *)&mdp_buf);
-		if (rc) {
-			WFD_MSG_ERR("Unable to queue the"
-					" buffer to mdp\n");
-			goto mdp_q_fail;
-		} else {
-			wfd_stats_update(&inst->stats,
-					WFD_STAT_EVENT_MDP_QUEUE);
-		}
-
 		INIT_LIST_HEAD(&mpair->list);
 		mpair->enc = enc_mregion;
 		mpair->mdp = mdp_mregion;
 		list_add_tail(&mpair->list, &inst->input_mem_list);
 
+		rc = v4l2_subdev_call(&wfd_dev->mdp_sdev, core, ioctl,
+				MDP_Q_BUFFER, (void *)&mdp_buf);
+		if (rc) {
+			WFD_MSG_ERR("Unable to queue the"
+					" buffer to mdp\n");
+			break;
+		} else {
+			wfd_stats_update(&inst->stats,
+					WFD_STAT_EVENT_MDP_QUEUE);
+		}
 	}
-
 	rc = v4l2_subdev_call(&wfd_dev->enc_sdev, core, ioctl,
 			ALLOC_RECON_BUFFERS, NULL);
 	if (rc) {
 		WFD_MSG_ERR("Failed to allocate recon buffers\n");
-		goto recon_alloc_fail;
+		goto alloc_fail;
 	}
 	return rc;
 
-	/*
-	 * Clean up only the buffer that we failed in setting up.
-	 * Caller will clean up the rest by calling free_input_buffers()
-	 */
-mdp_q_fail:
-	memset(&mmap_context, 0, sizeof(mmap_context));
-	mmap_context.mregion = mdp_mregion;
-	mmap_context.ion_client = wfd_dev->ion_client;
-	mmap_context.cookie = inst->mdp_inst;
-	v4l2_subdev_call(&wfd_dev->mdp_sdev, core, ioctl,
-			MDP_MUNMAP, (void *)&mmap_context);
-mdp_mmap_fail:
-	v4l2_subdev_call(&wfd_dev->enc_sdev,
-			core, ioctl, FREE_INPUT_BUFFER,
-			(void *)enc_mregion);
-set_input_fail:
-	memset(&mmap_context, 0, sizeof(mmap_context));
-	mmap_context.ion_client = wfd_dev->ion_client;
-	mmap_context.mregion = enc_mregion;
-	v4l2_subdev_call(&wfd_dev->enc_sdev, core, ioctl,
-			ENC_MUNMAP, &mmap_context);
 alloc_fail:
 	kfree(mpair);
 	kfree(enc_mregion);
 	kfree(mdp_mregion);
-recon_alloc_fail:
 	return rc;
 }
 void wfd_free_input_buffers(struct wfd_device *wfd_dev,
@@ -489,6 +461,14 @@ int wfd_vidbuf_buf_init(struct vb2_buffer *vb)
 		(struct wfd_device *)video_drvdata(priv_data);
 	struct mem_info *minfo = vb2_plane_cookie(vb, 0);
 	struct mem_region mregion;
+
+//Start LGE_BSP_CAMERA : Fixed WBT - jonghwan.ko@lge.com
+	if (minfo == NULL) {
+		WFD_MSG_ERR("not freeing buffers since allocation failed");
+		goto free_input_bufs;
+	}
+//End  LGE_BSP_CAMERA : Fixed WBT - jonghwan.ko@lge.com
+	
 	mregion.fd = minfo->fd;
 	mregion.offset = minfo->offset;
 	mregion.cookie = (u32)vb;
@@ -554,7 +534,11 @@ void wfd_vidbuf_buf_cleanup(struct vb2_buffer *vb)
 
 static int mdp_output_thread(void *data)
 {
+	//[LGE_S] 20130107 taewonee.kim@lge.com, QC pre patch, avoid exiting mdp task thread on error
+	//int rc = 0;
 	int rc = 0, no_sig_wait = 0;
+	//[LGE_E] 20130107 taewonee.kim@lge.com, QC pre patch, avoid exiting mdp task thread on error
+
 	struct file *filp = (struct file *)data;
 	struct wfd_inst *inst = filp->private_data;
 	struct wfd_device *wfd_dev =
@@ -563,6 +547,7 @@ static int mdp_output_thread(void *data)
 	struct mem_region *mregion;
 	struct vsg_buf_info ibuf_vsg;
 	while (!kthread_should_stop()) {
+		//[LGE_S] 20130107 taewonee.kim@lge.com, QC pre patch, avoid exiting mdp task thread on error
 		if (rc) {
 			WFD_MSG_DBG("%s() error in output thread\n", __func__);
 			if (!no_sig_wait) {
@@ -571,6 +556,7 @@ static int mdp_output_thread(void *data)
 			}
 			continue;
 		}
+		//[LGE_E] 20130107 taewonee.kim@lge.com, QC pre patch, avoid exiting mdp task thread on error
 		WFD_MSG_DBG("waiting for mdp output\n");
 		rc = v4l2_subdev_call(&wfd_dev->mdp_sdev,
 			core, ioctl, MDP_DQ_BUFFER, (void *)&obuf_mdp);
@@ -580,7 +566,10 @@ static int mdp_output_thread(void *data)
 				WFD_MSG_ERR("MDP reported err %d\n", rc);
 
 			WFD_MSG_ERR("Streamoff called\n");
+			//[LGE_S] 20130107 taewonee.kim@lge.com, QC pre patch, avoid exiting mdp task thread on error
+			//break;
 			continue;
+			//[LGE_E] 20130107 taewonee.kim@lge.com, QC pre patch, avoid exiting mdp task thread on error
 		} else {
 			wfd_stats_update(&inst->stats,
 				WFD_STAT_EVENT_MDP_DEQUEUE);
@@ -590,7 +579,10 @@ static int mdp_output_thread(void *data)
 		if (!mregion) {
 			WFD_MSG_ERR("mdp cookie is null\n");
 			rc = -EINVAL;
+			//[LGE_S] 20130107 taewonee.kim@lge.com, QC pre patch, avoid exiting mdp task thread on error
+			//break;
 			continue;
+			//[LGE_E] 20130107 taewonee.kim@lge.com, QC pre patch, avoid exiting mdp task thread on error
 		}
 
 		ibuf_vsg.mdp_buf_info = obuf_mdp;
@@ -605,7 +597,10 @@ static int mdp_output_thread(void *data)
 
 		if (rc) {
 			WFD_MSG_ERR("Failed to queue frame to vsg\n");
+			//[LGE_S] 20130107 taewonee.kim@lge.com, QC pre patch, avoid exiting mdp task thread on error
+			//break;
 			continue;
+			//[LGE_E] 20130107 taewonee.kim@lge.com, QC pre patch, avoid exiting mdp task thread on error
 		} else {
 			wfd_stats_update(&inst->stats,
 				WFD_STAT_EVENT_VSG_QUEUE);
@@ -639,7 +634,11 @@ int wfd_vidbuf_start_streaming(struct vb2_queue *q, unsigned int count)
 		WFD_MSG_ERR("Failed to start vsg\n");
 		goto subdev_start_fail;
 	}
+
+	//[LGE_S] 20130107 taewonee.kim@lge.com, QC pre patch, avoid exiting mdp task thread on error
 	init_completion(&inst->stop_mdp_thread);
+	//[LGE_E] 20130107 taewonee.kim@lge.com, QC pre patch, avoid exiting mdp task thread on error
+
 	inst->mdp_task = kthread_run(mdp_output_thread, priv_data,
 				"mdp_output_thread");
 	if (IS_ERR(inst->mdp_task)) {
@@ -674,7 +673,10 @@ int wfd_vidbuf_stop_streaming(struct vb2_queue *q)
 	if (rc)
 		WFD_MSG_ERR("Failed to stop VSG\n");
 
+	//[LGE_S] 20130107 taewonee.kim@lge.com, QC pre patch, avoid exiting mdp task thread on error
 	complete(&inst->stop_mdp_thread);
+	//[LGE_E] 20130107 taewonee.kim@lge.com, QC pre patch, avoid exiting mdp task thread on error
+
 	kthread_stop(inst->mdp_task);
 	rc = v4l2_subdev_call(&wfd_dev->enc_sdev, core, ioctl,
 			ENCODE_FLUSH, (void *)inst->venc_inst);
@@ -699,6 +701,14 @@ void wfd_vidbuf_buf_queue(struct vb2_buffer *vb)
 	struct wfd_inst *inst = (struct wfd_inst *)priv_data->private_data;
 	struct mem_region mregion;
 	struct mem_info *minfo = vb2_plane_cookie(vb, 0);
+
+//Start LGE_BSP_CAMERA : Fixed WBT - jonghwan.ko@lge.com
+	if (minfo == NULL) {
+		WFD_MSG_ERR("not freeing buffers since allocation failed");
+		return;
+	}
+//End  LGE_BSP_CAMERA : Fixed WBT - jonghwan.ko@lge.com
+	
 	mregion.fd = minfo->fd;
 	mregion.offset = minfo->offset;
 	mregion.cookie = (u32)vb;
@@ -1098,6 +1108,7 @@ static int wfdioc_s_parm(struct file *filp, void *fh,
 			rc = -EINVAL;
 			goto set_parm_fail;
 		}
+		venc_mode = VENC_MODE_CFR;
 		frame_interval =
 			a->parm.capture.timeperframe.numerator * NSEC_PER_SEC /
 			a->parm.capture.timeperframe.denominator;
@@ -1127,7 +1138,6 @@ static int wfdioc_s_parm(struct file *filp, void *fh,
 
 		max_frame_interval = (int64_t)frameskip.maxframeinterval;
 		vsg_mode = VSG_MODE_VFR;
-		venc_mode = VENC_MODE_VFR;
 
 		rc = v4l2_subdev_call(&wfd_dev->vsg_sdev, core,
 				ioctl, VSG_SET_MAX_FRAME_INTERVAL,
@@ -1135,25 +1145,24 @@ static int wfdioc_s_parm(struct file *filp, void *fh,
 
 		if (rc)
 			goto set_parm_fail;
+
+		rc = v4l2_subdev_call(&wfd_dev->vsg_sdev, core,
+				ioctl, VSG_SET_MODE, &vsg_mode);
+
+		if (rc)
+			goto set_parm_fail;
 	} else {
 		vsg_mode = VSG_MODE_CFR;
-		venc_mode = VENC_MODE_CFR;
-	}
+		rc = v4l2_subdev_call(&wfd_dev->vsg_sdev, core,
+				ioctl, VSG_SET_MODE, &vsg_mode);
 
-	rc = v4l2_subdev_call(&wfd_dev->vsg_sdev, core,
-			ioctl, VSG_SET_MODE, &vsg_mode);
-	if (rc) {
-		WFD_MSG_ERR("Setting FR mode for VSG failed\n");
-		goto set_parm_fail;
+		if (rc)
+			goto set_parm_fail;
 	}
 
 	rc = v4l2_subdev_call(&wfd_dev->enc_sdev, core,
 			ioctl, SET_FRAMERATE_MODE,
 			&venc_mode);
-	if (rc) {
-		WFD_MSG_ERR("Setting FR mode for VENC failed\n");
-		goto set_parm_fail;
-	}
 
 set_parm_fail:
 	return rc;
@@ -1644,21 +1653,12 @@ static int __devexit __wfd_remove(struct platform_device *pdev)
 	kfree(wfd_dev);
 	return 0;
 }
-
-static const struct of_device_id msm_wfd_dt_match[] = {
-	{.compatible = "qcom,msm-wfd"},
-	{}
-};
-
-MODULE_DEVICE_TABLE(of, msm_vidc_dt_match);
-
 static struct platform_driver wfd_driver = {
 	.probe =  __wfd_probe,
 	.remove = __wfd_remove,
 	.driver = {
 		.name = "msm_wfd",
 		.owner = THIS_MODULE,
-		.of_match_table = msm_wfd_dt_match,
 	}
 };
 

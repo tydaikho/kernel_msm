@@ -64,18 +64,6 @@ struct msm_camera_device_platform_data {
 	uint8_t is_vpe;
 	struct msm_bus_scale_pdata *cam_bus_scale_table;
 };
-enum msm_camera_csi_data_format {
-	CSI_8BIT,
-	CSI_10BIT,
-	CSI_12BIT,
-};
-struct msm_camera_csi_params {
-	enum msm_camera_csi_data_format data_format;
-	uint8_t lane_cnt;
-	uint8_t lane_assign;
-	uint8_t settle_cnt;
-	uint8_t dpcm_scheme;
-};
 
 #ifdef CONFIG_SENSORS_MT9T013
 struct msm_camera_legacy_device_platform_data {
@@ -180,21 +168,6 @@ enum msm_sensor_type {
 	YUV_SENSOR,
 };
 
-enum camera_vreg_type {
-	REG_LDO,
-	REG_VS,
-	REG_GPIO,
-	REG_MAX
-};
-
-struct camera_vreg_t {
-	const char *reg_name;
-	enum camera_vreg_type type;
-	int min_voltage;
-	int max_voltage;
-	int op_mode;
-};
-
 struct msm_gpio_set_tbl {
 	unsigned gpio;
 	unsigned long flags;
@@ -204,6 +177,7 @@ struct msm_gpio_set_tbl {
 struct msm_camera_csi_lane_params {
 	uint16_t csi_lane_assign;
 	uint16_t csi_lane_mask;
+	uint8_t csi_phy_sel;
 };
 
 struct msm_camera_gpio_conf {
@@ -232,6 +206,20 @@ struct msm_camera_i2c_conf {
 	uint8_t use_i2c_mux;
 	struct platform_device *mux_dev;
 	enum msm_camera_i2c_mux_mode i2c_mux_mode;
+};
+
+enum msm_camera_vreg_name_t {
+	CAM_VDIG,
+	CAM_VIO,
+	CAM_VANA,
+	CAM_VAF,
+/*LGE_CHANGE_S, For GK/GV 13M & 2.4M camera driver, 2012.09.11, gayoung85.lee@lge.com */
+	CAM_ISP_CORE,
+	CAM_ISP_HOST,
+	CAM_ISP_RAM,
+	CAM_ISP_CAMIF,
+	CAM_ISP_SYS,
+/*LGE_CHANGE_E, For GK/GV 13M & 2.4M camera driver, 2012.09.11, gayoung85.lee@lge.com */
 };
 
 struct msm_camera_sensor_platform_info {
@@ -288,13 +276,13 @@ struct msm_camera_sensor_info {
 	uint8_t num_resources;
 	struct msm_camera_sensor_flash_data *flash_data;
 	int csi_if;
-	struct msm_camera_csi_params csi_params;
 	struct msm_camera_sensor_strobe_flash_data *strobe_flash_data;
 	char *eeprom_data;
 	enum msm_camera_type camera_type;
 	enum msm_sensor_type sensor_type;
 	struct msm_actuator_info *actuator_info;
 	int pmic_gpio_enable;
+	int (*sensor_lcd_gpio_onoff)(int on);
 	struct msm_eeprom_info *eeprom_info;
 };
 
