@@ -293,6 +293,9 @@ static int kgsl_iommu_fault_handler(struct iommu_domain *domain,
 	struct kgsl_device *device;
 	struct adreno_device *adreno_dev;
 	unsigned int no_page_fault_log = 0;
+	unsigned int curr_context_id = 0;
+	unsigned int curr_global_ts = 0;
+	static struct kgsl_context *context;
 	unsigned int pid;
 	unsigned int fsynr0, fsynr1;
 	int write;
@@ -362,8 +365,38 @@ static int kgsl_iommu_fault_handler(struct iommu_domain *domain,
 	mmu->fault = 1;
 	iommu_dev->fault = 1;
 
-	trace_kgsl_mmu_pagefault(iommu_dev->kgsldev, addr, pid,
-			write ? "write" : "read");
+	kgsl_sharedmem_readl(&device->memstore, &curr_context_id,
+		KGSL_MEMSTORE_OFFSET(KGSL_MEMSTORE_GLOBAL, current_context));
+	context = kgsl_context_get(device, curr_context_id);
+
+	if (context != NULL && (context->devctxt != NULL)) {
+		struct adreno_context *drawctxt = context->devctxt;
+
+		ret = kgsl_sharedmem_readl(&device->memstore, &curr_global_ts,
+				KGSL_MEMSTORE_OFFSET(KGSL_MEMSTORE_GLOBAL, eoptimestamp));
+
+		if (ret < 0) {
+			KGSL_CORE_ERR("Invalid curr_global_ts = %d\n", curr_global_ts);
+			goto done;
+		}
+
+		/*
+		 * Store pagefault's timestamp in adreno context,
+		 * this information will be used in GFT
+		 */
+
+		if (drawctxt != NULL) {
+			drawctxt->pagefault = 1;
+			drawctxt->pagefault_ts = curr_global_ts;
+		}
+
+		kgsl_context_put(context);
+	}
+
+
+	trace_kgsl_mmu_pagefault(iommu_dev->kgsldev, addr,
+			kgsl_mmu_get_ptname_from_ptbase(mmu, ptbase),
+				write ? "write" : "read");
 
 	/*
 	 * We do not want the h/w to resume fetching data from an iommu unit
@@ -1117,12 +1150,10 @@ static int kgsl_iommu_get_pt_lsb(struct kgsl_mmu *mmu,
 	return 0;
 }
 
-static int kgsl_iommu_setstate(struct kgsl_mmu *mmu,
+static void kgsl_iommu_setstate(struct kgsl_mmu *mmu,
 				struct kgsl_pagetable *pagetable,
 				unsigned int context_id)
 {
-	int ret = 0;
-
 	if (mmu->flags & KGSL_FLAGS_STARTED) {
 		/* page table not current, then setup mmu to use new
 		 *  specified page table
@@ -1133,12 +1164,10 @@ static int kgsl_iommu_setstate(struct kgsl_mmu *mmu,
 			flags |= kgsl_mmu_pt_get_flags(mmu->hwpagetable,
 							mmu->device->id) |
 							KGSL_MMUFLAGS_TLBFLUSH;
-			ret = kgsl_setstate(mmu, context_id,
+			kgsl_setstate(mmu, context_id,
 				KGSL_MMUFLAGS_PTUPDATE | flags);
 		}
 	}
-
-	return ret;
 }
 
 /*
@@ -1707,28 +1736,28 @@ kgsl_iommu_get_current_ptbase(struct kgsl_mmu *mmu)
  * cpu
  * Return - void
  */
-static int kgsl_iommu_default_setstate(struct kgsl_mmu *mmu,
+static void kgsl_iommu_default_setstate(struct kgsl_mmu *mmu,
 					uint32_t flags)
 {
 	struct kgsl_iommu *iommu = mmu->priv;
 	int temp;
 	int i;
-	int ret = 0;
 	unsigned int pt_base = kgsl_iommu_get_pt_base_addr(mmu,
 						mmu->hwpagetable);
 	unsigned int pt_val;
 
-	ret = kgsl_iommu_enable_clk(mmu, KGSL_IOMMU_CONTEXT_USER);
-
-	if (ret) {
+	if (kgsl_iommu_enable_clk(mmu, KGSL_IOMMU_CONTEXT_USER)) {
 		KGSL_DRV_ERR(mmu->device, "Failed to enable iommu clocks\n");
-		return ret;
+		return;
 	}
 	/* Mask off the lsb of the pt base address since lsb will not change */
 	pt_base &= (iommu->iommu_reg_list[KGSL_IOMMU_CTX_TTBR0].reg_mask <<
 			iommu->iommu_reg_list[KGSL_IOMMU_CTX_TTBR0].reg_shift);
 
-	//if (msm_soc_version_supports_iommu_v1())
+	/* For v1 SMMU GPU needs to be idle for tlb invalidate as well */
+	if (msm_soc_version_supports_iommu_v1())
+		kgsl_idle(mmu->device);
+
 	/* Acquire GPU-CPU sync Lock here */
 	msm_iommu_lock();
 
@@ -1765,7 +1794,6 @@ static int kgsl_iommu_default_setstate(struct kgsl_mmu *mmu,
 
 	/* Disable smmu clock */
 	kgsl_iommu_disable_clk_on_ts(mmu, 0, false);
-	return ret;
 }
 
 /*
@@ -1807,7 +1835,6 @@ struct kgsl_mmu_ops iommu_ops = {
 	.mmu_pagefault = NULL,
 	.mmu_get_current_ptbase = kgsl_iommu_get_current_ptbase,
 	.mmu_enable_clk = kgsl_iommu_enable_clk,
-	.mmu_disable_clk = kgsl_iommu_disable_clk,
 	.mmu_disable_clk_on_ts = kgsl_iommu_disable_clk_on_ts,
 	.mmu_get_pt_lsb = kgsl_iommu_get_pt_lsb,
 	.mmu_get_reg_gpuaddr = kgsl_iommu_get_reg_gpuaddr,
