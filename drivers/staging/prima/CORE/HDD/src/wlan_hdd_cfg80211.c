@@ -8702,6 +8702,7 @@ void wlan_hdd_cfg80211_lphb_ind_handler
       return;
    }
 
+#ifdef NL80211_TESTMODE
    lphbInd = (tSirLPHBInd *)indCont;
    skb = cfg80211_testmode_alloc_event_skb(
                   ((hdd_adapter_t *)pAdapter)->wdev.wiphy,
@@ -8713,6 +8714,7 @@ void wlan_hdd_cfg80211_lphb_ind_handler
              "LPHB timeout, NL buffer alloc fail");
       return;
    }
+#endif
 
    if(!nla_put_u32(skb, WLAN_HDD_TM_ATTR_CMD, WLAN_HDD_TM_CMD_WLAN_HB))
    {
@@ -8733,7 +8735,9 @@ void wlan_hdd_cfg80211_lphb_ind_handler
                 "WLAN_HDD_TM_ATTR_DATA put fail");
       goto nla_put_failure;
    }
+#ifdef NL80211_TESTMODE
    cfg80211_testmode_event(skb, GFP_ATOMIC);
+#endif
    return;
 
 nla_put_failure:
@@ -9089,7 +9093,7 @@ static struct cfg80211_ops wlan_hdd_cfg80211_ops =
      .resume = wlan_hdd_cfg80211_resume_wlan,
      .suspend = wlan_hdd_cfg80211_suspend_wlan,
      .set_mac_acl = wlan_hdd_cfg80211_set_mac_acl,
-#ifdef WLAN_NL80211_TESTMODE
+#ifdef NL80211_TESTMODE
      .testmode_cmd = wlan_hdd_cfg80211_testmode,
 #endif
      .dump_survey = wlan_hdd_cfg80211_dump_survey,
