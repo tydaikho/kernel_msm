@@ -2177,6 +2177,7 @@ eHalStatus pmcWowlAddBcastPattern (
     }
 
     WLAN_VOS_DIAG_LOG_REPORT(log_ptr);
+    WLAN_VOS_DIAG_LOG_FREE(log_ptr);
 #endif
 
 
@@ -2887,8 +2888,8 @@ eHalStatus pmcSetPreferredNetworkList
     tANI_U8 ucDot11Mode;
 
     VOS_TRACE( VOS_MODULE_ID_SME, VOS_TRACE_LEVEL_INFO,
-               "%s: SSID = 0x%08lx%08lx%08lx%08lx%08lx%08lx%08lx%08lx, "
-               "0x%08lx%08lx%08lx%08lx%08lx%08lx%08lx%08lx", __func__,
+               "%s: SSID = 0x%08x%08x%08x%08x%08x%08x%08x%08x, "
+               "0x%08x%08x%08x%08x%08x%08x%08x%08x", __func__,
                *((v_U32_t *) &pRequest->aNetworks[0].ssId.ssId[0]),
                *((v_U32_t *) &pRequest->aNetworks[0].ssId.ssId[4]),
                *((v_U32_t *) &pRequest->aNetworks[0].ssId.ssId[8]),
@@ -3198,7 +3199,7 @@ eHalStatus pmcSetGTKOffload (tHalHandle hHal, tpSirGtkOffloadParams pGtkOffload,
     tpAniSirGlobal   pMac = PMAC_STRUCT(hHal);
     tCsrRoamSession *pSession = CSR_GET_SESSION( pMac, sessionId );
 
-    VOS_TRACE( VOS_MODULE_ID_HDD, VOS_TRACE_LEVEL_INFO, "%s: KeyReplayCounter: %d", 
+    VOS_TRACE( VOS_MODULE_ID_HDD, VOS_TRACE_LEVEL_INFO, "%s: KeyReplayCounter: %lld",
                 __func__, pGtkOffload->ullKeyReplayCounter);
 
     if(NULL == pSession )
@@ -3252,7 +3253,7 @@ eHalStatus pmcGetGTKOffload(tHalHandle hHal, GTKOffloadGetInfoCallback callbackR
     tpAniSirGlobal          pMac = PMAC_STRUCT(hHal);
     tCsrRoamSession *pSession = CSR_GET_SESSION( pMac, sessionId );
 
-    VOS_TRACE( VOS_MODULE_ID_SME, VOS_TRACE_LEVEL_INFO, "%s: filterId = %d", 
+    VOS_TRACE( VOS_MODULE_ID_SME, VOS_TRACE_LEVEL_INFO, "%s: Entered",
                 __func__);
 
     if(NULL == pSession )
