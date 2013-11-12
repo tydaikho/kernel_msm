@@ -517,8 +517,7 @@ limCheckRxRSNIeMatch(tpAniSirGlobal pMac, tDot11fIERSN rxRSNIe,tpPESession pSess
     theyRequirePMF = (rxRSNIe.RSN_Cap[0] >> 6) & 0x1;
     theyArePMFCapable = (rxRSNIe.RSN_Cap[0] >> 7) & 0x1;
 
-    if ((theyRequirePMF && theyArePMFCapable && !weArePMFCapable) ||
-        (weRequirePMF && !theyArePMFCapable))
+    if ((theyRequirePMF && !weArePMFCapable) || (weRequirePMF && !theyArePMFCapable))
     {
         limLog(pMac, LOG1, FL("Association fail, robust management frames policy violation"));
         return eSIR_MAC_ROBUST_MGMT_FRAMES_POLICY_VIOLATION;
@@ -703,11 +702,7 @@ limCleanupRxPath(tpAniSirGlobal pMac, tpDphHashNode pStaDs,tpPESession psessionE
         pMac->lim.gLastBeaconDtimPeriod = 0;
 
 #ifdef FEATURE_WLAN_CCX
-#ifdef FEATURE_WLAN_CCX_UPLOAD
-        limSendSmeTsmIEInd(pMac, psessionEntry, 0, 0, 0);
-#else
         limDeactivateAndChangeTimer(pMac,eLIM_TSM_TIMER);
-#endif /* FEATURE_WLAN_CCX_UPLOAD */
 #endif
 
         /**
@@ -1809,7 +1804,6 @@ limPopulateOwnRateSet(tpAniSirGlobal pMac,
 #ifdef WLAN_FEATURE_11AC
 tSirRetStatus
 limPopulatePeerRateSet(tpAniSirGlobal pMac,
-
                       tpSirSupportedRates pRates,
                       tANI_U8* pSupportedMCSSet,
                       tANI_U8 basicOnly,
@@ -1840,7 +1834,9 @@ limPopulatePeerRateSet(tpAniSirGlobal pMac,
         limLog(pMac, LOGE, FL("more than SIR_MAC_RATESET_EID_MAX rates\n"));
         goto error;
     }
-    if (psessionEntry->dot11mode == WNI_CFG_DOT11_MODE_11G)
+    if ((psessionEntry->dot11mode == WNI_CFG_DOT11_MODE_11G) ||
+        (psessionEntry->dot11mode == WNI_CFG_DOT11_MODE_11A) ||
+        (psessionEntry->dot11mode == WNI_CFG_DOT11_MODE_11N))
     {
 
         if (psessionEntry->extRateSet.numRates <= SIR_MAC_RATESET_EID_MAX)
@@ -1916,8 +1912,6 @@ limPopulatePeerRateSet(tpAniSirGlobal pMac,
             tempRateSet.rate[min] = 0xff;
         }
     }
-
-
     if (IS_DOT11_MODE_HT(psessionEntry->dot11mode))
     {
         val = SIZE_OF_SUPPORTED_MCS_SET;
@@ -1947,7 +1941,6 @@ limPopulatePeerRateSet(tpAniSirGlobal pMac,
  error:
     return eSIR_FAILURE;
 } /*** limPopulatePeerRateSet() ***/
-
 /**
  * limPopulateMatchingRateSet
  * FUNCTION:
@@ -2664,7 +2657,7 @@ tSirRetStatus limAddFTStaSelf(tpAniSirGlobal pMac, tANI_U16 assocId, tpPESession
 
 
 #if defined WLAN_FEATURE_VOWIFI_11R_DEBUG
-    limLog( pMac, LOG1, FL( "Sending SIR_HAL_ADD_STA_REQ... (aid %d)" ), pAddStaParams->assocId);
+    limLog( pMac, LOGE, FL( "Sending SIR_HAL_ADD_STA_REQ... (aid %d)" ), pAddStaParams->assocId);
 #endif
     MTRACE(macTraceMsgTx(pMac, psessionEntry->peSessionId, msgQ.type));
 
@@ -2713,8 +2706,6 @@ limAddStaSelf(tpAniSirGlobal pMac,tANI_U16 staIdx, tANI_U8 updateSta, tpPESessio
     tSirRetStatus     retCode = eSIR_SUCCESS;
     tSirMacAddr staMac;
     tANI_U32 listenInterval = WNI_CFG_LISTEN_INTERVAL_STADEF;
-    tANI_U32 shortGi20MhzSupport;
-    tANI_U32 shortGi40MhzSupport;
     /*This self Sta dot 11 mode comes from the cfg and the expectation here is
      * that cfg carries the systemwide capability that device under
      * consideration can support. This capability gets plumbed into the cfg
@@ -2807,61 +2798,10 @@ limAddStaSelf(tpAniSirGlobal pMac,tANI_U16 staIdx, tANI_U8 updateSta, tpPESessio
             pAddStaParams->maxAmpduSize       = limGetHTCapability(pMac, eHT_MAX_RX_AMPDU_FACTOR, psessionEntry);
             pAddStaParams->maxAmsduSize       = limGetHTCapability( pMac, eHT_MAX_AMSDU_LENGTH, psessionEntry );
             pAddStaParams->fDsssCckMode40Mhz  = limGetHTCapability( pMac, eHT_DSSS_CCK_MODE_40MHZ, psessionEntry);
-            /*
-             * We will read the gShortGI20Mhz from ini file, and if it is set
-             * to 1 then we will tell Peer that we support 40Mhz short GI
-             */
-            if (HAL_STATUS_SUCCESS(ccmCfgGetInt
-                                   (pMac, WNI_CFG_SHORT_GI_20MHZ,
-                                   &shortGi20MhzSupport)))
-            {
-                if (VOS_TRUE == shortGi20MhzSupport)
-                {
-                    pAddStaParams->fShortGI20Mhz =
-                       WNI_CFG_SHORT_GI_20MHZ_STAMAX;
-                    //pAddStaParams->fShortGI20Mhz =
-                    //limGetHTCapability(pMac, eHT_SHORT_GI_20MHZ,
-                    //                   psessionEntry);
-                }
-                else
-                {
-                    pAddStaParams->fShortGI20Mhz = VOS_FALSE;
-                }
-            }
-            else
-            {
-                PELOGE(limLog(pMac, LOGE, FL("could not retrieve shortGI 20Mhz"
-                                             "CFG,setting value to default"));)
-                pAddStaParams->fShortGI20Mhz = WNI_CFG_SHORT_GI_20MHZ_STADEF;
-            }
-
-            /*
-             * We will read the gShortGI40Mhz from ini file, and if it is set
-             * to 1 then we will tell Peer that we support 40Mhz short GI
-             */
-            if (HAL_STATUS_SUCCESS(ccmCfgGetInt
-                                   (pMac, WNI_CFG_SHORT_GI_40MHZ,
-                                   &shortGi40MhzSupport)))
-            {
-                if (VOS_TRUE == shortGi40MhzSupport)
-                {
-                    pAddStaParams->fShortGI40Mhz =
-                       WNI_CFG_SHORT_GI_40MHZ_STAMAX;
-                    //pAddStaParams->fShortGI40Mhz =
-                    //limGetHTCapability(pMac, eHT_SHORT_GI_40MHZ,
-                    //                    psessionEntry);
-                }
-                else
-                {
-                    pAddStaParams->fShortGI40Mhz = VOS_FALSE;
-                }
-            }
-            else
-            {
-                PELOGE(limLog(pMac, LOGE, FL("could not retrieve shortGI 40Mhz"
-                                             "CFG,setting value to default"));)
-                pAddStaParams->fShortGI40Mhz = WNI_CFG_SHORT_GI_40MHZ_STADEF;
-            }
+            pAddStaParams->fShortGI20Mhz      = WNI_CFG_SHORT_GI_20MHZ_STAMAX;
+            // pAddStaParams->fShortGI20Mhz   = limGetHTCapability( pMac, eHT_SHORT_GI_20MHZ, psessionEntry);
+            pAddStaParams->fShortGI40Mhz      = WNI_CFG_SHORT_GI_40MHZ_STAMAX;
+            // pAddStaParams->fShortGI40Mhz   = limGetHTCapability( pMac, eHT_SHORT_GI_40MHZ, psessionEntry);
        }
     }
 #ifdef WLAN_FEATURE_11AC
@@ -3384,8 +3324,6 @@ tSirRetStatus limStaSendAddBss( tpAniSirGlobal pMac, tpSirAssocRsp pAssocRsp,
     tANI_U8 i;
     tpDphHashNode pStaDs = NULL;
     tANI_U8 chanWidthSupp = 0;
-    tANI_U32 shortGi20MhzSupport;
-    tANI_U32 shortGi40MhzSupport;
     // Package SIR_HAL_ADD_BSS_REQ message parameters
     pAddBssParams = vos_mem_malloc(sizeof( tAddBssParams ));
     if (NULL == pAddBssParams)
@@ -3560,56 +3498,8 @@ tSirRetStatus limStaSendAddBss( tpAniSirGlobal pMac, tpSirAssocRsp pAssocRsp,
             pAddBssParams->staContext.maxAmsduSize       = ( tANI_U8 )pAssocRsp->HTCaps.maximalAMSDUsize;
             pAddBssParams->staContext.maxAmpduDensity    =            pAssocRsp->HTCaps.mpduDensity;
             pAddBssParams->staContext.fDsssCckMode40Mhz = (tANI_U8)pAssocRsp->HTCaps.dsssCckMode40MHz;
-            /*
-             * We will check gShortGI20Mhz and gShortGI40Mhz from ini file.
-             * if they are set then we will use what ever Assoc response coming
-             * from AP supports. If these values are set as 0 in ini file then
-             * we will hardcode this values to 0.
-             */
-            if (HAL_STATUS_SUCCESS(ccmCfgGetInt
-                                   (pMac, WNI_CFG_SHORT_GI_20MHZ,
-                                   &shortGi20MhzSupport)))
-            {
-                if (VOS_TRUE == shortGi20MhzSupport)
-                {
-                    pAddBssParams->staContext.fShortGI20Mhz =
-                                   (tANI_U8)pAssocRsp->HTCaps.shortGI20MHz;
-                }
-                else
-                {
-                    pAddBssParams->staContext.fShortGI20Mhz = VOS_FALSE;
-                }
-            }
-            else
-            {
-                PELOGE(limLog(pMac, LOGE, FL("could not retrieve shortGI 20Mhz"
-                                             "CFG,setting value to default"));)
-                pAddBssParams->staContext.fShortGI20Mhz =
-                    WNI_CFG_SHORT_GI_20MHZ_STADEF;
-            }
-
-            if (HAL_STATUS_SUCCESS(ccmCfgGetInt
-                                   (pMac, WNI_CFG_SHORT_GI_40MHZ,
-                                   &shortGi40MhzSupport)))
-            {
-                if (VOS_TRUE == shortGi40MhzSupport)
-                {
-                    pAddBssParams->staContext.fShortGI40Mhz =
-                                   (tANI_U8)pAssocRsp->HTCaps.shortGI40MHz;
-                }
-                else
-                {
-                    pAddBssParams->staContext.fShortGI40Mhz = VOS_FALSE;
-                }
-            }
-            else
-            {
-                PELOGE(limLog(pMac, LOGE, FL("could not retrieve shortGI 40Mhz"
-                                             "CFG,setting value to default"));)
-                pAddBssParams->staContext.fShortGI40Mhz =
-                    WNI_CFG_SHORT_GI_40MHZ_STADEF;
-            }
-
+            pAddBssParams->staContext.fShortGI20Mhz = (tANI_U8)pAssocRsp->HTCaps.shortGI20MHz;
+            pAddBssParams->staContext.fShortGI40Mhz = (tANI_U8)pAssocRsp->HTCaps.shortGI40MHz;
             pAddBssParams->staContext.maxAmpduSize= pAssocRsp->HTCaps.maxRxAMPDUFactor;
             if( pAddBssParams->staContext.vhtTxBFCapable && pMac->lim.disableLDPCWithTxbfAP )
             {
@@ -3735,8 +3625,6 @@ tSirRetStatus limStaSendAddBssPreAssoc( tpAniSirGlobal pMac, tANI_U8 updateEntry
     tANI_U8 i;
     tSchBeaconStruct *pBeaconStruct;
     tANI_U8 chanWidthSupp = 0;
-    tANI_U32 shortGi20MhzSupport;
-    tANI_U32 shortGi40MhzSupport;
     tpSirBssDescription bssDescription = &psessionEntry->pLimJoinReq->bssDescription;
 
     pBeaconStruct = vos_mem_malloc(sizeof(tSchBeaconStruct));
@@ -3909,56 +3797,8 @@ tSirRetStatus limStaSendAddBssPreAssoc( tpAniSirGlobal pMac, tANI_U8 updateEntry
             pAddBssParams->staContext.maxAmsduSize       = ( tANI_U8 ) pBeaconStruct->HTCaps.maximalAMSDUsize;
             pAddBssParams->staContext.maxAmpduDensity    =             pBeaconStruct->HTCaps.mpduDensity;
             pAddBssParams->staContext.fDsssCckMode40Mhz = (tANI_U8)pBeaconStruct->HTCaps.dsssCckMode40MHz;
-            /*
-             * We will check gShortGI20Mhz and gShortGI40Mhz from ini file.
-             * if they are set then we will use what ever Beacon coming from AP
-             * supports. If these values are set as 0 in ini file then
-             * we will hardcode this values to 0.
-             */
-            if (HAL_STATUS_SUCCESS(ccmCfgGetInt
-                                   (pMac, WNI_CFG_SHORT_GI_20MHZ,
-                                   &shortGi20MhzSupport)))
-            {
-                if (VOS_TRUE == shortGi20MhzSupport)
-                {
-                    pAddBssParams->staContext.fShortGI20Mhz =
-                                  (tANI_U8)pBeaconStruct->HTCaps.shortGI20MHz;
-                }
-                else
-                {
-                    pAddBssParams->staContext.fShortGI20Mhz = VOS_FALSE;
-                }
-            }
-            else
-            {
-                PELOGE(limLog(pMac, LOGE, FL("could not retrieve shortGI 20Mhz"
-                                             "CFG,setting value to default"));)
-                pAddBssParams->staContext.fShortGI20Mhz =
-                    WNI_CFG_SHORT_GI_20MHZ_STADEF;
-            }
-
-            if (HAL_STATUS_SUCCESS(ccmCfgGetInt
-                                   (pMac, WNI_CFG_SHORT_GI_40MHZ,
-                                   &shortGi40MhzSupport)))
-            {
-                if (VOS_TRUE == shortGi40MhzSupport)
-                {
-                    pAddBssParams->staContext.fShortGI40Mhz =
-                                  (tANI_U8)pBeaconStruct->HTCaps.shortGI40MHz;
-                }
-                else
-                {
-                    pAddBssParams->staContext.fShortGI40Mhz = VOS_FALSE;
-                }
-            }
-            else
-            {
-                PELOGE(limLog(pMac, LOGE, FL("could not retrieve shortGI 40Mhz"
-                                             "CFG,setting value to default"));)
-                pAddBssParams->staContext.fShortGI40Mhz =
-                    WNI_CFG_SHORT_GI_40MHZ_STADEF;
-            }
-
+            pAddBssParams->staContext.fShortGI20Mhz = (tANI_U8)pBeaconStruct->HTCaps.shortGI20MHz;
+            pAddBssParams->staContext.fShortGI40Mhz = (tANI_U8)pBeaconStruct->HTCaps.shortGI40MHz;
             pAddBssParams->staContext.maxAmpduSize= pBeaconStruct->HTCaps.maxRxAMPDUFactor;
             if( pAddBssParams->staContext.vhtTxBFCapable && pMac->lim.disableLDPCWithTxbfAP )
             {
@@ -4357,49 +4197,3 @@ void limSendSmeUnprotectedMgmtFrameInd(
     return;
 }
 #endif
-
-#if defined(FEATURE_WLAN_CCX) && defined(FEATURE_WLAN_CCX_UPLOAD)
-/** -------------------------------------------------------------
-\fn     limSendSmeTsmIEInd
-\brief  Forwards the TSM IE information to SME.
-\param  tpAniSirGlobal    pMac
-\param  psessionEntry - PE session context
-\param  tid - traffic id
-\param  state - tsm state (enabled/disabled)
-\param  measurementInterval - measurement interval
-\return none
-  -------------------------------------------------------------*/
-void limSendSmeTsmIEInd(tpAniSirGlobal pMac, tpPESession psessionEntry,
-                            tANI_U8 tid, tANI_U8 state, tANI_U16 measInterval)
-{
-    tSirMsgQ         mmhMsg;
-    tpSirSmeTsmIEInd pSirSmeTsmIeInd = NULL;
-
-    if (!pMac || !psessionEntry)
-    {
-        return;
-    }
-    pSirSmeTsmIeInd = vos_mem_malloc(sizeof(tSirSmeTsmIEInd));
-    if (NULL == pSirSmeTsmIeInd)
-    {
-        limLog(pMac, LOGP,
-               FL("AllocateMemory failed for tSirSmeTsmIEInd"));
-        return;
-    }
-    vos_mem_set((void*)pSirSmeTsmIeInd, sizeof(tSirSmeTsmIEInd), 0);
-
-    pSirSmeTsmIeInd->sessionId = psessionEntry->smeSessionId;
-    pSirSmeTsmIeInd->tsmIe.tsid = tid;
-    pSirSmeTsmIeInd->tsmIe.state= state;
-    pSirSmeTsmIeInd->tsmIe.msmt_interval= measInterval;
-
-    mmhMsg.type = eWNI_SME_TSM_IE_IND;
-    mmhMsg.bodyptr = pSirSmeTsmIeInd;
-    mmhMsg.bodyval = 0;
-
-    limSysProcessMmhMsgApi(pMac, &mmhMsg, ePROT);
-    return;
-}
-#endif /* FEATURE_WLAN_CCX && FEATURE_WLAN_CCX_UPLOAD */
-
-

@@ -353,7 +353,7 @@ typedef struct sPESession           // Added to Support BT-AMP
 #endif
     tANI_BOOLEAN fWaitForProbeRsp;
     tANI_BOOLEAN fIgnoreCapsChange;
-    tANI_BOOLEAN fDeauthReceived;
+    tANI_U8    oxygenNwkIniFeatureEnabled;
 #ifdef FEATURE_WLAN_DIAG_SUPPORT_LIM
     tANI_S8 rssi;
 #endif

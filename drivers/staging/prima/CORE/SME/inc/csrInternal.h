@@ -94,11 +94,6 @@
      NULL \
 )
 
-#define CSR_IS_SELECT_5GHZ_MARGIN( pMac ) \
-( \
-   (((pMac)->roam.configParam.nSelect5GHzMargin)?eANI_BOOLEAN_TRUE:eANI_BOOLEAN_FALSE) \
-)
-
 #if  defined (WLAN_FEATURE_VOWIFI_11R) || defined (FEATURE_WLAN_CCX) || defined(FEATURE_WLAN_LFR)
 #define CSR_IS_ROAM_PREFER_5GHZ( pMac ) \
 ( \
@@ -631,7 +626,6 @@ typedef struct tagCsrConfig
     tANI_U8       nImmediateRoamRssiDiff;
     tANI_BOOLEAN  nRoamPrefer5GHz;
     tANI_BOOLEAN  nRoamIntraBand;
-    tANI_BOOLEAN  isWESModeEnabled;
     tANI_BOOLEAN  nRoamScanControl;
     tANI_U8       nProbes;
     tANI_U16      nRoamScanHomeAwayTime;
@@ -659,13 +653,13 @@ typedef struct tagCsrConfig
     tANI_BOOLEAN enableVhtFor24GHz;
 #endif
     tANI_U8   txLdpcEnable;
+    tANI_BOOLEAN  enableOxygenNwk;
 
     /*
      * Enable/Disable heartbeat offload
      */
     tANI_BOOLEAN enableHeartBeatOffload;
     tANI_U8 isAmsduSupportInAMPDU;
-    tANI_U8 nSelect5GHzMargin;
 }tCsrConfig;
 
 typedef struct tagCsrChannelPowerInfo
@@ -776,7 +770,6 @@ typedef struct tagCsrScanStruct
     tDblLinkList scanCmdPendingList;
 #endif
     tCsrChannel occupiedChannels;   //This includes all channels on which candidate APs are found
-    tANI_S8     inScanResultBestAPRssi;
 }tCsrScanStruct;
 
 #ifdef FEATURE_WLAN_TDLS_INTERNAL
@@ -913,6 +906,9 @@ typedef struct tagCsrRoamSession
     eCsrRoamingReason roamingReason;
     tANI_BOOLEAN fCancelRoaming;
     vos_timer_t hTimerRoaming;
+    vos_timer_t hTimerIbssJoining;
+    tCsrTimerInfo ibssJoinTimerInfo;
+    tANI_BOOLEAN ibss_join_pending;
     eCsrRoamResult roamResult;  //the roamResult that is used when the roaming timer fires
     tCsrRoamJoinStatus joinFailStatusCode;    //This is the reason code for join(assoc) failure
     //The status code returned from PE for deauth or disassoc (in case of lostlink), or our own dynamic roaming
@@ -938,9 +934,6 @@ typedef struct tagCsrRoamSession
     tANI_U8 prevOpChannel;
     tANI_U16 clientDissSecs;
     tANI_U32 roamTS1;
-#if defined(FEATURE_WLAN_CCX_UPLOAD)
-    tCsrCcxCckmIe suppCckmIeInfo;
-#endif
 #endif
     tANI_U8 bRefAssocStartCnt;   //Tracking assoc start indication
    /* to force the AP initiate fresh 802.1x authentication after re-association need to clear
@@ -999,7 +992,6 @@ typedef struct tagCsrRoamStruct
 #endif
 #if  defined (WLAN_FEATURE_VOWIFI_11R) || defined (FEATURE_WLAN_CCX) || defined(FEATURE_WLAN_LFR)
     tANI_U8        RoamRssiDiff;
-    tANI_BOOLEAN   isWESModeEnabled;
 #endif
 }tCsrRoamStruct;
 
@@ -1257,13 +1249,6 @@ eHalStatus csrGetRoamRssi(tpAniSirGlobal pMac,
                           void * pContext,
                           void * pVosContext);
 #endif
-
-#if defined(FEATURE_WLAN_CCX) && defined(FEATURE_WLAN_CCX_UPLOAD)
-eHalStatus csrGetTsmStats(tpAniSirGlobal pMac, tCsrTsmStatsCallback callback, tANI_U8 staId,
-                              tCsrBssid bssId, void *pContext, void* pVosContext,
-                              tANI_U8 tid);
-#endif  /* FEATURE_WLAN_CCX && FEATURE_WLAN_CCX_UPLOAD */
-
 eHalStatus csrRoamRegisterCallback(tpAniSirGlobal pMac, csrRoamCompleteCallback callback, void *pContext);
 /* ---------------------------------------------------------------------------
     \fn csrGetConfigParam
@@ -1382,8 +1367,6 @@ tANI_BOOLEAN csrRoamIs11rAssoc(tpAniSirGlobal pMac);
 #ifdef FEATURE_WLAN_CCX
 //Returns whether the current association is a CCX assoc or not
 tANI_BOOLEAN csrRoamIsCCXAssoc(tpAniSirGlobal pMac);
-tANI_BOOLEAN csrRoamIsCcxIniFeatureEnabled(tpAniSirGlobal pMac);
-tANI_BOOLEAN csrNeighborRoamIsCCXAssoc(tpAniSirGlobal pMac);
 #endif
 
 //Remove this code once SLM_Sessionization is supported

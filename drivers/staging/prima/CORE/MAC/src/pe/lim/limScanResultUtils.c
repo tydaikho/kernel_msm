@@ -139,14 +139,14 @@ limDeactivateMinChannelTimerDuringScan(tpAniSirGlobal pMac)
  * @return None
  */
 #if defined WLAN_FEATURE_VOWIFI
-eHalStatus
+void
 limCollectBssDescription(tpAniSirGlobal pMac,
                          tSirBssDescription *pBssDescr,
                          tpSirProbeRespBeacon pBPR,
                          tANI_U8  *pRxPacketInfo,
                          tANI_U8  fScanning)
 #else
-eHalStatus
+void
 limCollectBssDescription(tpAniSirGlobal pMac,
                          tSirBssDescription *pBssDescr,
                          tpSirProbeRespBeacon pBPR,
@@ -167,17 +167,6 @@ limCollectBssDescription(tpAniSirGlobal pMac,
     pBody = WDA_GET_RX_MPDU_DATA(pRxPacketInfo);
     rfBand = WDA_GET_RX_RFBAND(pRxPacketInfo);
 
-    /**
-     * Drop all the beacons and probe response without P2P IE during P2P search
-     */
-    if (NULL != pMac->lim.gpLimMlmScanReq && pMac->lim.gpLimMlmScanReq->p2pSearch)
-    {
-        if (NULL == limGetP2pIEPtr(pMac, (pBody + SIR_MAC_B_PR_SSID_OFFSET), ieLen))
-        {
-            limLog( pMac, LOG3, MAC_ADDRESS_STR, MAC_ADDR_ARRAY(pHdr->bssId));
-            return eHAL_STATUS_FAILURE;
-        }
-    }
 
     /**
      * Length of BSS desription is without length of
@@ -300,7 +289,7 @@ limCollectBssDescription(tpAniSirGlobal pMac,
         pBssDescr->aniIndicator,
         ieLen );
 
-    return eHAL_STATUS_SUCCESS;
+    return;
 } /*** end limCollectBssDescription() ***/
 
 /**
@@ -380,8 +369,6 @@ limCheckAndAddBssDescription(tpAniSirGlobal pMac,
     tANI_U8               rxChannelInBeacon = 0;
     eHalStatus            status;
     tANI_U8               dontUpdateAll = 0;
-    tANI_U8               rfBand = 0;
-    tANI_U8               rxChannelInBD = 0;
 
     tSirMacAddr bssid = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
     tANI_BOOLEAN fFound = FALSE;
@@ -456,39 +443,35 @@ limCheckAndAddBssDescription(tpAniSirGlobal pMac,
      * from another channel heard as noise on the current scanning channel
      */
 
-    if ((pBPR->dsParamsPresent) || (pBPR->HTInfo.present))
+    if (pBPR->dsParamsPresent)
     {
        /* This means that we are in 2.4GHz mode or 5GHz 11n mode */
        rxChannelInBeacon = limGetChannelFromBeacon(pMac, pBPR);
-       rfBand = WDA_GET_RX_RFBAND(pRxPacketInfo);
-       rxChannelInBD = WDA_GET_RX_CH(pRxPacketInfo);
-
-       if ((!rfBand) || IS_5G_BAND(rfBand))
+       if (rxChannelInBeacon < 15)
        {
-          rxChannelInBD = limUnmapChannel(rxChannelInBD);
-       }
-
-       if(rxChannelInBD != rxChannelInBeacon)
-       {
-          /* BCAST Frame, if CH do not match, Drop */
-           if(WDA_IS_RX_BCAST(pRxPacketInfo))
-           {
+          /* This means that we are in 2.4GHz mode */
+          if(WDA_GET_RX_CH(pRxPacketInfo) != rxChannelInBeacon)
+          {
+             /* BCAST Frame, if CH do not match, Drop */
+             if(WDA_IS_RX_BCAST(pRxPacketInfo))
+             {
                 limLog(pMac, LOG3, FL("Beacon/Probe Rsp dropped. Channel in BD %d. "
                                       "Channel in beacon" " %d"),
                        WDA_GET_RX_CH(pRxPacketInfo),limGetChannelFromBeacon(pMac, pBPR));
                 return;
-           }
-           /* Unit cast frame, Probe RSP, do not drop */
-           else
-           {
-              dontUpdateAll = 1;
-              limLog(pMac, LOG3, FL("SSID %s, CH in ProbeRsp %d, CH in BD %d, miss-match, Do Not Drop"),
-                                     pBPR->ssId.ssId,
-                                     rxChannelInBeacon,
-                                     WDA_GET_RX_CH(pRxPacketInfo));
-              WDA_GET_RX_CH(pRxPacketInfo) = rxChannelInBeacon;
-           }
-        }
+             }
+             /* Unit cast frame, Probe RSP, do not drop */
+             else
+             {
+                dontUpdateAll = 1;
+                limLog(pMac, LOG3, FL("SSID %s, CH in ProbeRsp %d, CH in BD %d, miss-match, Do Not Drop"),
+                                       pBPR->ssId.ssId,
+                                       rxChannelInBeacon,
+                                       WDA_GET_RX_CH(pRxPacketInfo));
+                WDA_GET_RX_CH(pRxPacketInfo) = rxChannelInBeacon;
+             }
+          }
+       }
     }
 
     /**
@@ -521,19 +504,11 @@ limCheckAndAddBssDescription(tpAniSirGlobal pMac,
 
     // In scan state, store scan result.
 #if defined WLAN_FEATURE_VOWIFI
-    status = limCollectBssDescription(pMac, &pBssDescr->bssDescription,
+    limCollectBssDescription(pMac, &pBssDescr->bssDescription,
                              pBPR, pRxPacketInfo, fScanning);
-    if (eHAL_STATUS_SUCCESS != status)
-    {
-        goto last;
-    }
 #else
-    status = limCollectBssDescription(pMac, &pBssDescr->bssDescription,
+    limCollectBssDescription(pMac, &pBssDescr->bssDescription,
                              pBPR, pRxPacketInfo);
-    if (eHAL_STATUS_SUCCESS != status)
-    {
-        goto last;
-    }
 #endif
     pBssDescr->bssDescription.fProbeRsp = fProbeRsp;
 
@@ -623,12 +598,10 @@ limCheckAndAddBssDescription(tpAniSirGlobal pMac,
         }
     }//(eANI_BOOLEAN_TRUE == fScanning)
 
-last:
     if( eHAL_STATUS_SUCCESS != status )
     {
         vos_mem_free( pBssDescr );
     }
-    return;
 } /****** end limCheckAndAddBssDescription() ******/
 
 
